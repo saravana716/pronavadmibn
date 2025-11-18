@@ -1,0 +1,5 @@
+{
+  "name": "Admin Panel",
+  "description": "An admin panel for managing job applications, admission applications, and contact messages. Features include authentication, dashboard statistics, data tables with search, filtering, pagination, and a modal for viewing and editing records.",
+  "requestFramePermissions": []
+}

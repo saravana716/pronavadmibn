@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read access to admin collection for login
+    match /admin/{document=**} {
+      allow read: if true;
+      allow write: if false; // Prevent writes for security
+    }
+    
+    // Allow read/write access to gallery collection
+    match /gallery/{document=**} {
+      allow read, write: if true;
+    }
+    
+    // Allow read/write access to admissionForms collection
+    match /admissionForms/{document=**} {
+      allow read, write: if true;
+    }
+    
+    // Allow read/write access to contactForms collection
+    match /contactForms/{document=**} {
+      allow read, write: if true;
+    }
+    
+    // Allow read/write access to jobApplications collection
+    match /jobApplications/{document=**} {
+      allow read, write: if true;
+    }
+    
+    // Allow read/write access to homePage collection (for video and banner)
+    match /homePage/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+

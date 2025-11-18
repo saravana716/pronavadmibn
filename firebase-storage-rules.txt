@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow read/write access to gallery files
+    match /gallery/{allPaths=**} {
+      allow read, write: if true;
+    }
+    
+    // Allow read/write access to homepage files (video and banner)
+    match /homepage/{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}
+
