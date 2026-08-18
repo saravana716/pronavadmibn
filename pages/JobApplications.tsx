@@ -1,7 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
@@ -13,20 +12,6 @@ import { JobApplication, Status } from '../types';
 import { STATUS_OPTIONS } from '../constants';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePagination } from '../hooks/usePagination';
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase app for Firestore
-const firestoreApp = initializeApp(firestoreConfig, 'job-firestore');
-const db = getFirestore(firestoreApp);
 
 const ITEMS_PER_PAGE = 5;
 
@@ -40,7 +25,7 @@ const JobApplications: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editableApp, setEditableApp] = useState<JobApplication | null>(null);
 
-  // Load job applications from Firestore
+  // Load job applications from Supabase
   useEffect(() => {
     loadApplications();
   }, []);
@@ -49,42 +34,25 @@ const JobApplications: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const jobApplicationsRef = collection(db, 'jobApplications');
-      const snapshot = await getDocs(jobApplicationsRef);
       
-      const apps: JobApplication[] = [];
+      const { data, error: dbError } = await supabase
+        .from('job_applications')
+        .select('*');
+
+      if (dbError) throw dbError;
       
-      snapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        
-        // Convert Firestore Timestamp to string
-        let createdAtStr = '';
-        if (data.createdAt) {
-          if (data.createdAt instanceof Timestamp) {
-            createdAtStr = data.createdAt.toDate().toLocaleDateString();
-          } else if (data.createdAt.toDate) {
-            createdAtStr = data.createdAt.toDate().toLocaleDateString();
-          } else {
-            createdAtStr = new Date(data.createdAt).toLocaleDateString();
-          }
-        } else {
-          createdAtStr = new Date().toLocaleDateString();
-        }
-        
-        // Map Firestore data to JobApplication interface
-        apps.push({
-          id: docSnapshot.id,
-          name: data.fullName || data.name || '',
-          email: data.email || '',
-          phone: data.phone || '',
-          city: data.city || '',
-          position: data.position || '',
-          resumeUrl: data.resumeUrl || '',
-          coverLetter: data.coverLetter || data.message || '',
-          status: (data.status as Status) || Status.New,
-          createdAt: createdAtStr
-        });
-      });
+      const apps: JobApplication[] = (data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name || '',
+        email: row.email || '',
+        phone: row.phone || '',
+        city: row.city || '',
+        position: row.position || '',
+        resumeUrl: row.resume_url || '',
+        coverLetter: row.cover_letter || '',
+        status: (row.status as Status) || Status.New,
+        createdAt: row.created_at ? new Date(row.created_at).toLocaleDateString() : new Date().toLocaleDateString()
+      }));
       
       // Sort by createdAt (newest first)
       apps.sort((a, b) => {
@@ -96,7 +64,7 @@ const JobApplications: React.FC = () => {
       setApplications(apps);
     } catch (err: any) {
       console.error('Error loading job applications:', err);
-      setError('Failed to load job applications. Please check Firestore permissions.');
+      setError('Failed to load job applications from database.');
     } finally {
       setLoading(false);
     }
@@ -142,17 +110,21 @@ const JobApplications: React.FC = () => {
     if (editableApp) {
       try {
         setError(null);
-        // Update in Firestore
-        const appRef = doc(db, 'jobApplications', editableApp.id);
-        await updateDoc(appRef, {
-          fullName: editableApp.name,
-          email: editableApp.email,
-          phone: editableApp.phone,
-          position: editableApp.position,
-          resumeUrl: editableApp.resumeUrl,
-          coverLetter: editableApp.coverLetter,
-          status: editableApp.status
-        });
+        // Update in Supabase
+        const { error: dbError } = await supabase
+          .from('job_applications')
+          .update({
+            name: editableApp.name,
+            email: editableApp.email,
+            phone: editableApp.phone,
+            position: editableApp.position,
+            resume_url: editableApp.resumeUrl,
+            cover_letter: editableApp.coverLetter,
+            status: editableApp.status
+          })
+          .eq('id', editableApp.id);
+
+        if (dbError) throw dbError;
         
         // Update local state
         setApplications(prev => prev.map(app => app.id === editableApp.id ? editableApp : app));

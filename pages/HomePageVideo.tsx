@@ -1,45 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
-import { getFirestore, doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
+import { supabase, BUCKET_NAME } from '../supabase';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-
-// Firebase configuration for Storage
-const storageConfig = {
-  apiKey: "AIzaSyD1JxUUTKta_i0vUaYMx8vxJu7sBFTq3LY",
-  authDomain: "datastore-4c889.firebaseapp.com",
-  projectId: "datastore-4c889",
-  storageBucket: "datastore-4c889.appspot.com",
-  messagingSenderId: "894842595998",
-  appId: "1:894842595998:web:8902e80ecdf7b59d65a98f"
-};
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase apps
-const storageApp = initializeApp(storageConfig, 'storage');
-const firestoreApp = initializeApp(firestoreConfig, 'firestore');
-
-// Get Storage from storage app
-const storage = getStorage(storageApp);
-
-// Get Firestore from firestore app
-const db = getFirestore(firestoreApp);
 
 interface HomePageVideo {
   url: string;
   name: string;
   fullPath: string;
-  updatedAt: Timestamp;
+  updatedAt: string;
 }
 
 const HomePageVideo: React.FC = () => {
@@ -58,16 +26,20 @@ const HomePageVideo: React.FC = () => {
   const loadCurrentVideo = async () => {
     try {
       setLoading(true);
-      const videoDocRef = doc(db, 'homePage', 'video');
-      const videoDoc = await getDoc(videoDocRef);
+      const { data, error: dbError } = await supabase
+        .from('homepage_settings')
+        .select('*')
+        .eq('key', 'video')
+        .maybeSingle();
       
-      if (videoDoc.exists()) {
-        const data = videoDoc.data();
+      if (dbError) throw dbError;
+
+      if (data) {
         setCurrentVideo({
           url: data.url,
           name: data.name,
-          fullPath: data.fullPath,
-          updatedAt: data.updatedAt
+          fullPath: data.full_path,
+          updatedAt: data.updated_at
         });
       } else {
         setCurrentVideo(null);
@@ -75,7 +47,7 @@ const HomePageVideo: React.FC = () => {
       setError(null);
     } catch (err: any) {
       console.error('Error loading video:', err);
-      setError('Failed to load current video. Please check Firestore permissions.');
+      setError('Failed to load current video from database.');
     } finally {
       setLoading(false);
     }
@@ -102,60 +74,58 @@ const HomePageVideo: React.FC = () => {
 
     setUploading(true);
     setError(null);
-    setUploadProgress(0);
+    setUploadProgress(10);
 
     try {
       // Delete old video if exists
-      if (currentVideo) {
+      if (currentVideo && currentVideo.fullPath) {
         try {
-          const oldFileRef = ref(storage, currentVideo.fullPath);
-          await deleteObject(oldFileRef);
-          console.log('Old video deleted from storage');
+          if (currentVideo.fullPath.includes('/')) {
+            await supabase.storage.from(BUCKET_NAME).remove([currentVideo.fullPath]);
+            console.log('Old video deleted from storage');
+          }
         } catch (deleteErr: any) {
-          console.warn('Error deleting old video (may not exist):', deleteErr);
-          // Continue even if old file deletion fails
+          console.warn('Error deleting old video:', deleteErr);
         }
       }
 
-      // Upload new video
-      const fileName = `homepage_video_${Date.now()}_${selectedFile.name}`;
-      const storageRef = ref(storage, `homepage/${fileName}`);
-      const uploadTask = uploadBytesResumable(storageRef, selectedFile);
+      setUploadProgress(40);
 
-      await new Promise<void>((resolve, reject) => {
-        uploadTask.on(
-          'state_changed',
-          (snapshot) => {
-            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-            setUploadProgress(progress);
-          },
-          (error) => {
-            console.error('Upload error:', error);
-            reject(error);
-          },
-          async () => {
-            try {
-              // Get download URL after upload completes
-              const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-              console.log('Video uploaded successfully. URL:', downloadURL);
-              
-              // Save to Firestore (replace existing)
-              const videoDocRef = doc(db, 'homePage', 'video');
-              await setDoc(videoDocRef, {
-                url: downloadURL,
-                name: selectedFile.name,
-                fullPath: uploadTask.snapshot.ref.fullPath,
-                updatedAt: Timestamp.now()
-              });
-              
-              console.log('Video saved to Firestore');
-              resolve();
-            } catch (err) {
-              reject(err);
-            }
-          }
-        );
-      });
+      // Upload new video
+      const fileName = `homepage_video_${Date.now()}_${selectedFile.name.replace(/\s+/g, '_')}`;
+      const filePath = `homepage/${fileName}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(filePath, selectedFile, { cacheControl: '3600', upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      setUploadProgress(70);
+
+      // Get download URL after upload completes
+      const { data: urlData } = supabase.storage
+        .from(BUCKET_NAME)
+        .getPublicUrl(filePath);
+
+      const downloadURL = urlData.publicUrl;
+
+      setUploadProgress(90);
+
+      // Save/Upsert to database
+      const { error: dbError } = await supabase
+        .from('homepage_settings')
+        .upsert({
+          key: 'video',
+          url: downloadURL,
+          name: selectedFile.name,
+          full_path: filePath,
+          updated_at: new Date().toISOString()
+        });
+
+      if (dbError) throw dbError;
+
+      setUploadProgress(100);
 
       // Reload current video
       await loadCurrentVideo();
@@ -164,14 +134,7 @@ const HomePageVideo: React.FC = () => {
       setError(null);
     } catch (err: any) {
       console.error('Upload error:', err);
-      
-      if (err.code === 'storage/unauthorized' || err.code === 'permission-denied') {
-        setError(`Permission denied: Please update Firebase Storage security rules for bucket "${storage.app.options.storageBucket}". Rules should allow write access to "homepage/*" path.`);
-      } else if (err.code === 'permission-denied' || err.code === 'firestore/permission-denied') {
-        setError(`Firestore permission denied: Please update Firestore security rules for project "${db.app.options.projectId}". Rules should allow write access to "homePage" collection.`);
-      } else {
-        setError(`Upload failed: ${err.message}`);
-      }
+      setError(`Upload failed: ${err.message || err}`);
     } finally {
       setUploading(false);
     }
@@ -199,8 +162,8 @@ const HomePageVideo: React.FC = () => {
             </div>
             <div className="text-sm text-gray-600">
               <p><strong>File Name:</strong> {currentVideo.name}</p>
-              <p><strong>Last Updated:</strong> {currentVideo.updatedAt instanceof Timestamp 
-                ? new Date(currentVideo.updatedAt.toMillis()).toLocaleString() 
+              <p><strong>Last Updated:</strong> {currentVideo.updatedAt 
+                ? new Date(currentVideo.updatedAt).toLocaleString() 
                 : 'Unknown'}</p>
             </div>
           </div>

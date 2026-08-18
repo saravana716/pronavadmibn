@@ -1,22 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import StatCard from '../components/ui/StatCard';
 import Card from '../components/ui/Card';
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase app for Firestore
-const firestoreApp = initializeApp(firestoreConfig, 'dashboard-firestore');
-const db = getFirestore(firestoreApp);
 
 const Dashboard: React.FC = () => {
   const [jobApplicationsCount, setJobApplicationsCount] = useState<number>(0);
@@ -33,18 +18,18 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       
-      // Load all counts in parallel
+      // Load all counts in parallel using Supabase
       const [jobApps, admissionApps, contactMsgs, galleryItems] = await Promise.all([
-        getDocs(collection(db, 'jobApplications')),
-        getDocs(collection(db, 'admissionForms')),
-        getDocs(collection(db, 'contactForms')),
-        getDocs(collection(db, 'gallery'))
+        supabase.from('job_applications').select('*', { count: 'exact', head: true }),
+        supabase.from('admission_applications').select('*', { count: 'exact', head: true }),
+        supabase.from('contact_messages').select('*', { count: 'exact', head: true }),
+        supabase.from('gallery').select('*', { count: 'exact', head: true })
       ]);
 
-      setJobApplicationsCount(jobApps.size);
-      setAdmissionApplicationsCount(admissionApps.size);
-      setContactMessagesCount(contactMsgs.size);
-      setGalleryItemsCount(galleryItems.size);
+      setJobApplicationsCount(jobApps.count || 0);
+      setAdmissionApplicationsCount(admissionApps.count || 0);
+      setContactMessagesCount(contactMsgs.count || 0);
+      setGalleryItemsCount(galleryItems.count || 0);
     } catch (err: any) {
       console.error('Error loading dashboard counts:', err);
     } finally {

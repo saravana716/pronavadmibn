@@ -1,7 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
@@ -13,20 +12,6 @@ import { ContactMessage, Status } from '../types';
 import { STATUS_OPTIONS } from '../constants';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePagination } from '../hooks/usePagination';
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase app for Firestore
-const firestoreApp = initializeApp(firestoreConfig, 'contact-firestore');
-const db = getFirestore(firestoreApp);
 
 const ITEMS_PER_PAGE = 5;
 
@@ -40,7 +25,7 @@ const ContactMessages: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editableMsg, setEditableMsg] = useState<ContactMessage | null>(null);
 
-  // Load contact messages from Firestore
+  // Load contact messages from Supabase
   useEffect(() => {
     loadMessages();
   }, []);
@@ -49,40 +34,23 @@ const ContactMessages: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const contactFormsRef = collection(db, 'contactForms');
-      const snapshot = await getDocs(contactFormsRef);
       
-      const msgs: ContactMessage[] = [];
+      const { data, error: dbError } = await supabase
+        .from('contact_messages')
+        .select('*');
+
+      if (dbError) throw dbError;
       
-      snapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        
-        // Convert Firestore Timestamp to string
-        let createdAtStr = '';
-        if (data.createdAt) {
-          if (data.createdAt instanceof Timestamp) {
-            createdAtStr = data.createdAt.toDate().toLocaleDateString();
-          } else if (data.createdAt.toDate) {
-            createdAtStr = data.createdAt.toDate().toLocaleDateString();
-          } else {
-            createdAtStr = new Date(data.createdAt).toLocaleDateString();
-          }
-        } else {
-          createdAtStr = new Date().toLocaleDateString();
-        }
-        
-        // Map Firestore data to ContactMessage interface
-        msgs.push({
-          id: docSnapshot.id,
-          firstName: data.firstName || '',
-          lastName: data.lastName || '',
-          email: data.email || '',
-          subject: data.subject || '',
-          message: data.message || data.additionalMessage || '',
-          status: (data.status as Status) || Status.New,
-          createdAt: createdAtStr
-        });
-      });
+      const msgs: ContactMessage[] = (data || []).map((row: any) => ({
+        id: row.id,
+        firstName: row.first_name || '',
+        lastName: row.last_name || '',
+        email: row.email || '',
+        subject: row.subject || '',
+        message: row.message || '',
+        status: (row.status as Status) || Status.New,
+        createdAt: row.created_at ? new Date(row.created_at).toLocaleDateString() : new Date().toLocaleDateString()
+      }));
       
       // Sort by createdAt (newest first)
       msgs.sort((a, b) => {
@@ -94,7 +62,7 @@ const ContactMessages: React.FC = () => {
       setMessages(msgs);
     } catch (err: any) {
       console.error('Error loading contact messages:', err);
-      setError('Failed to load contact messages. Please check Firestore permissions.');
+      setError('Failed to load contact messages from database.');
     } finally {
       setLoading(false);
     }
@@ -141,16 +109,20 @@ const ContactMessages: React.FC = () => {
     if (editableMsg) {
       try {
         setError(null);
-        // Update in Firestore
-        const msgRef = doc(db, 'contactForms', editableMsg.id);
-        await updateDoc(msgRef, {
-          firstName: editableMsg.firstName,
-          lastName: editableMsg.lastName,
-          email: editableMsg.email,
-          subject: editableMsg.subject,
-          message: editableMsg.message,
-          status: editableMsg.status
-        });
+        // Update in Supabase
+        const { error: dbError } = await supabase
+          .from('contact_messages')
+          .update({
+            first_name: editableMsg.firstName,
+            last_name: editableMsg.lastName,
+            email: editableMsg.email,
+            subject: editableMsg.subject,
+            message: editableMsg.message,
+            status: editableMsg.status
+          })
+          .eq('id', editableMsg.id);
+
+        if (dbError) throw dbError;
         
         // Update local state
         setMessages(prev => prev.map(msg => msg.id === editableMsg.id ? editableMsg : msg));

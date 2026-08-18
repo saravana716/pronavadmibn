@@ -1,41 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, Timestamp } from 'firebase/firestore';
+import { supabase, BUCKET_NAME } from '../supabase';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
-
-// Firebase configuration for Storage
-// NOTE: If you get "Permission denied" errors, you need to update Firebase Storage security rules.
-// See FIREBASE_STORAGE_SETUP.md for detailed instructions.
-const storageConfig = {
-  apiKey: "AIzaSyD1JxUUTKta_i0vUaYMx8vxJu7sBFTq3LY",
-  authDomain: "datastore-4c889.firebaseapp.com",
-  projectId: "datastore-4c889",
-  storageBucket: "datastore-4c889.appspot.com",
-  messagingSenderId: "894842595998",
-  appId: "1:894842595998:web:8902e80ecdf7b59d65a98f"
-};
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase apps
-const storageApp = initializeApp(storageConfig, 'storage');
-const firestoreApp = initializeApp(firestoreConfig, 'firestore');
-
-// Get Storage from storage app
-const storage = getStorage(storageApp);
-
-// Get Firestore from firestore app
-const db = getFirestore(firestoreApp);
 
 type Category = 'All' | 'Junior' | 'Senior' | 'K1' | 'K2' | 'Day Care';
 
@@ -46,7 +12,7 @@ interface GalleryItem {
   type: 'image' | 'video';
   fullPath: string;
   category?: Category;
-  createdAt?: Timestamp;
+  createdAt?: string;
 }
 
 const categories: Category[] = ['All', 'Junior', 'Senior', 'K1', 'K2', 'Day Care'];
@@ -69,39 +35,28 @@ const Gallery: React.FC = () => {
   const loadGalleryItems = async () => {
     try {
       setLoading(true);
-      const galleryCollection = collection(db, 'gallery');
-      const snapshot = await getDocs(galleryCollection);
-      
-      const items: GalleryItem[] = [];
-      
-      snapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        items.push({
-          id: docSnapshot.id,
-          url: data.url,
-          name: data.name,
-          type: data.type,
-          fullPath: data.fullPath,
-          category: data.category || 'Junior', // Default to Junior for old items
-          createdAt: data.createdAt
-        });
-      });
-      
-      // Sort by createdAt (newest first)
-      items.sort((a, b) => {
-        if (a.createdAt && b.createdAt) {
-          const aTime = a.createdAt instanceof Timestamp ? a.createdAt.toMillis() : 0;
-          const bTime = b.createdAt instanceof Timestamp ? b.createdAt.toMillis() : 0;
-          return bTime - aTime;
-        }
-        return 0;
-      });
+      const { data, error: dbError } = await supabase
+        .from('gallery')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (dbError) throw dbError;
+
+      const items: GalleryItem[] = (data || []).map((row: any) => ({
+        id: row.id,
+        url: row.url,
+        name: row.name,
+        type: row.type,
+        fullPath: row.full_path,
+        category: row.category as Category,
+        createdAt: row.created_at
+      }));
       
       setGalleryItems(items);
       setError(null);
     } catch (err: any) {
       console.error('Error loading gallery:', err);
-      setError('Failed to load gallery items. Please check Firestore permissions.');
+      setError('Failed to load gallery items from database.');
     } finally {
       setLoading(false);
     }
@@ -129,71 +84,47 @@ const Gallery: React.FC = () => {
     const progress: { [key: string]: number } = {};
 
     try {
-      // Verify storage instance is using the correct config
-      console.log('Using storage bucket:', storage.app.options.storageBucket);
-      
       const uploadPromises = files.map(async (file) => {
-        const fileName = `${Date.now()}_${file.name}`;
-        // Explicitly use storage from storageApp
-        const storageRef = ref(storage, `gallery/${fileName}`);
-        const uploadTask = uploadBytesResumable(storageRef, file);
+        const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+        const filePath = `gallery/${fileName}`;
 
-        return new Promise<void>((resolve, reject) => {
-          uploadTask.on(
-            'state_changed',
-            (snapshot) => {
-              const progressValue = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              progress[fileName] = progressValue;
-              setUploadProgress({ ...progress });
-            },
-            (error) => {
-              console.error('Upload error:', error);
-              console.error('Error code:', error.code);
-              console.error('Error message:', error.message);
-              console.error('Storage bucket:', storage.app.options.storageBucket);
-              reject(error);
-            },
-            async () => {
-              try {
-                // Get download URL after upload completes
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                console.log('File uploaded successfully. URL:', downloadURL);
-                
-                // Determine file type
-                const type = file.type.startsWith('video/') ? 'video' : 'image';
-                
-                // Save to Firestore
-                console.log('Saving to Firestore...', {
-                  projectId: db.app.options.projectId,
-                  collection: 'gallery'
-                });
-                
-                try {
-                  const docRef = await addDoc(collection(db, 'gallery'), {
-                    url: downloadURL,
-                    name: file.name,
-                    type: type,
-                    fullPath: uploadTask.snapshot.ref.fullPath,
-                    category: uploadCategory,
-                    createdAt: Timestamp.now()
-                  });
-                  console.log('Saved to Firestore with ID:', docRef.id);
-                  resolve();
-                } catch (firestoreError: any) {
-                  console.error('Firestore save error:', firestoreError);
-                  console.error('Firestore error code:', firestoreError.code);
-                  console.error('Firestore error message:', firestoreError.message);
-                  console.error('Firestore project:', db.app.options.projectId);
-                  
-                  // Reject with Firestore-specific error
-                  reject(new Error(`Firestore error: ${firestoreError.message} (Code: ${firestoreError.code}). Please check Firestore security rules for project "${db.app.options.projectId}"`));
-                }
-              } catch (err) {
-                reject(err);
-              }
-            }
-          );
+        progress[fileName] = 20;
+        setUploadProgress({ ...progress });
+
+        // 1. Upload to Supabase Storage
+        const { error: uploadError } = await supabase.storage
+          .from(BUCKET_NAME)
+          .upload(filePath, file, { cacheControl: '3600', upsert: true });
+
+        if (uploadError) throw uploadError;
+
+        progress[fileName] = 60;
+        setUploadProgress({ ...progress });
+
+        // 2. Get Public URL
+        const { data: urlData } = supabase.storage
+          .from(BUCKET_NAME)
+          .getPublicUrl(filePath);
+
+        const downloadURL = urlData.publicUrl;
+
+        progress[fileName] = 80;
+        setUploadProgress({ ...progress });
+
+        // 3. Save to database table 'gallery'
+        const type = file.type.startsWith('video/') ? 'video' : 'image';
+        const { error: dbError } = await supabase.from('gallery').insert({
+          url: downloadURL,
+          name: file.name,
+          type: type,
+          full_path: filePath,
+          category: uploadCategory
         });
+
+        if (dbError) throw dbError;
+
+        progress[fileName] = 100;
+        setUploadProgress({ ...progress });
       });
 
       await Promise.all(uploadPromises);
@@ -204,21 +135,7 @@ const Gallery: React.FC = () => {
       setError(null);
     } catch (err: any) {
       console.error('Upload error:', err);
-      console.error('Error details:', {
-        code: err.code,
-        message: err.message,
-        storageBucket: storage.app.options.storageBucket
-      });
-      
-      if (err.code === 'storage/unauthorized' || err.code === 'permission-denied') {
-        setError(`Permission denied: Please update Firebase Storage security rules for bucket "${storage.app.options.storageBucket}". Rules should allow write access to "gallery/*" path.`);
-      } else if (err.message && err.message.includes('Firestore error')) {
-        setError(err.message);
-      } else if (err.code === 'permission-denied' || err.code === 'firestore/permission-denied') {
-        setError(`Firestore permission denied: Please update Firestore security rules for project "${db.app.options.projectId}". Rules should allow write access to "gallery" collection.`);
-      } else {
-        setError(`Upload failed: ${err.message}`);
-      }
+      setError(`Upload failed: ${err.message || err}`);
     } finally {
       setUploading(false);
     }
@@ -231,11 +148,17 @@ const Gallery: React.FC = () => {
 
     try {
       // Delete from Storage
-      const fileRef = ref(storage, fullPath);
-      await deleteObject(fileRef);
+      try {
+        if (fullPath && fullPath.includes('/')) {
+          await supabase.storage.from(BUCKET_NAME).remove([fullPath]);
+        }
+      } catch (storageErr) {
+        console.warn('Storage delete warning:', storageErr);
+      }
       
-      // Delete from Firestore
-      await deleteDoc(doc(db, 'gallery', id));
+      // Delete from Database
+      const { error: dbError } = await supabase.from('gallery').delete().eq('id', id);
+      if (dbError) throw dbError;
       
       await loadGalleryItems();
       setError(null);

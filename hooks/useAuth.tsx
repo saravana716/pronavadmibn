@@ -1,23 +1,6 @@
 
 import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase app for authentication
-const firestoreApp = initializeApp(firestoreConfig, 'auth');
-const db = getFirestore(firestoreApp);
-
-const AUTH_STORAGE_KEY = 'admin_auth';
+import { supabase } from '../supabase';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -34,98 +17,86 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [user, setUser] = useState<{ email: string; name: string } | null>(null);
 
-  // Check localStorage on mount to restore auth state
+  // Monitor auth state session on mount
   useEffect(() => {
-    const checkAuthState = () => {
+    const checkAuthState = async () => {
       try {
-        const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
-        if (storedAuth) {
-          const authData = JSON.parse(storedAuth);
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session && session.user) {
           setIsAuthenticated(true);
-          setUser(authData.user);
+          setUser({
+            email: session.user.email || '',
+            name: session.user.email?.split('@')[0] || 'Admin'
+          });
         }
       } catch (error) {
         console.error('Error loading auth state:', error);
-        localStorage.removeItem(AUTH_STORAGE_KEY);
       } finally {
         setIsLoading(false);
       }
     };
 
     checkAuthState();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session && session.user) {
+        setIsAuthenticated(true);
+        setUser({
+          email: session.user.email || '',
+          name: session.user.email?.split('@')[0] || 'Admin'
+        });
+      } else {
+        setIsAuthenticated(false);
+        setUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true);
-      
-      // Query Firestore for admin with matching email
-      // Normalize email: lowercase and trim
-      const normalizedEmail = email.toLowerCase().trim();
-      const adminRef = collection(db, 'admin');
-      const q = query(adminRef, where('email', '==', normalizedEmail));
-      const querySnapshot = await getDocs(q);
-      
-      console.log('Searching for email:', normalizedEmail);
-      console.log('Query result count:', querySnapshot.size);
-
-      if (querySnapshot.empty) {
-        console.error('No admin found with email:', email);
-        setIsLoading(false);
-        return false;
-      }
-
-      // Check if password matches
-      let adminFound = false;
-      let adminData: { email: string; name: string } | null = null;
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.password === password) {
-          adminFound = true;
-          adminData = {
-            email: data.email,
-            name: data.name || 'Admin'
-          };
-        }
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.toLowerCase().trim(),
+        password
       });
 
-      if (adminFound && adminData) {
-        setIsAuthenticated(true);
-        setUser(adminData);
-        
-        // Save to localStorage
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
-          user: adminData,
-          timestamp: Date.now()
-        }));
-        
-        setIsLoading(false);
-        return true;
-      } else {
-        console.error('Invalid password for email:', email);
+      if (error) {
+        console.error('Login error:', error.message);
         setIsLoading(false);
         return false;
       }
+
+      if (data && data.user) {
+        setIsAuthenticated(true);
+        setUser({
+          email: data.user.email || '',
+          name: data.user.email?.split('@')[0] || 'Admin'
+        });
+        setIsLoading(false);
+        return true;
+      }
+      setIsLoading(false);
+      return false;
     } catch (error: any) {
       console.error('Login error:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      
-      // Check for Firestore permission errors
-      if (error.code === 'permission-denied') {
-        console.error('Firestore permission denied. Please check Firestore security rules.');
-      }
-      
       setIsLoading(false);
       return false;
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Error during logout:', error);
+    }
     setIsAuthenticated(false);
     setUser(null);
-    localStorage.removeItem(AUTH_STORAGE_KEY);
   };
 
   return (

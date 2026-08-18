@@ -13,6 +13,7 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+console.log("aaa",email, password, isAuthenticated, isLoading);
 
   // Redirect if already authenticated
   useEffect(() => {

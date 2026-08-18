@@ -1,7 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore';
+import { supabase } from '../supabase';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
@@ -13,20 +12,6 @@ import { AdmissionApplication, Status } from '../types';
 import { STATUS_OPTIONS } from '../constants';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePagination } from '../hooks/usePagination';
-
-// Firebase configuration for Firestore/Database
-const firestoreConfig = {
-  apiKey: "AIzaSyA1mtHVRk0TyWhGFc50JGfVMsFK4tLoxWg",
-  authDomain: "pranav-global-school---pgs.firebaseapp.com",
-  projectId: "pranav-global-school---pgs",
-  storageBucket: "pranav-global-school---pgs.firebasestorage.app",
-  messagingSenderId: "1052193372039",
-  appId: "1:1052193372039:web:f38831d3dbf591eee7c522"
-};
-
-// Initialize Firebase app for Firestore
-const firestoreApp = initializeApp(firestoreConfig, 'admission-firestore');
-const db = getFirestore(firestoreApp);
 
 const ITEMS_PER_PAGE = 5;
 
@@ -40,7 +25,7 @@ const AdmissionApplications: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editableApp, setEditableApp] = useState<AdmissionApplication | null>(null);
 
-  // Load admission applications from Firestore
+  // Load admission applications from Supabase
   useEffect(() => {
     loadApplications();
   }, []);
@@ -49,43 +34,26 @@ const AdmissionApplications: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const admissionFormsRef = collection(db, 'admissionForms');
-      const snapshot = await getDocs(admissionFormsRef);
       
-      const apps: AdmissionApplication[] = [];
+      const { data, error: dbError } = await supabase
+        .from('admission_applications')
+        .select('*');
+
+      if (dbError) throw dbError;
       
-      snapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        
-        // Convert Firestore Timestamp to string
-        let createdAtStr = '';
-        if (data.createdAt) {
-          if (data.createdAt instanceof Timestamp) {
-            createdAtStr = data.createdAt.toDate().toLocaleDateString();
-          } else if (data.createdAt.toDate) {
-            createdAtStr = data.createdAt.toDate().toLocaleDateString();
-          } else {
-            createdAtStr = new Date(data.createdAt).toLocaleDateString();
-          }
-        } else {
-          createdAtStr = new Date().toLocaleDateString();
-        }
-        
-        // Map Firestore data to AdmissionApplication interface
-        apps.push({
-          id: docSnapshot.id,
-          studentName: data.studentName || '',
-          parentName: data.parentName || '',
-          email: data.emailId || data.email || '',
-          phone: data.mobileNo || data.phone || '',
-          grade: data.grade || '',
-          city: data.city || '',
-          previousSchool: data.previousSchool || '',
-          message: data.message || data.additionalMessage || '',
-          status: (data.status as Status) || Status.New,
-          createdAt: createdAtStr
-        });
-      });
+      const apps: AdmissionApplication[] = (data || []).map((row: any) => ({
+        id: row.id,
+        studentName: row.student_name || '',
+        parentName: row.parent_name || '',
+        email: row.email || '',
+        phone: row.phone || '',
+        grade: row.grade || '',
+        city: row.city || '',
+        previousSchool: row.previous_school || '',
+        message: row.message || '',
+        status: (row.status as Status) || Status.New,
+        createdAt: row.created_at ? new Date(row.created_at).toLocaleDateString() : new Date().toLocaleDateString()
+      }));
       
       // Sort by createdAt (newest first)
       apps.sort((a, b) => {
@@ -97,7 +65,7 @@ const AdmissionApplications: React.FC = () => {
       setApplications(apps);
     } catch (err: any) {
       console.error('Error loading admission applications:', err);
-      setError('Failed to load admission applications. Please check Firestore permissions.');
+      setError('Failed to load admission applications from database.');
     } finally {
       setLoading(false);
     }
@@ -143,19 +111,23 @@ const AdmissionApplications: React.FC = () => {
     if (editableApp) {
       try {
         setError(null);
-        // Update in Firestore
-        const appRef = doc(db, 'admissionForms', editableApp.id);
-        await updateDoc(appRef, {
-          studentName: editableApp.studentName,
-          parentName: editableApp.parentName,
-          emailId: editableApp.email,
-          mobileNo: editableApp.phone,
-          grade: editableApp.grade,
-          city: editableApp.city,
-          previousSchool: editableApp.previousSchool,
-          status: editableApp.status,
-          message: editableApp.message
-        });
+        // Update in Supabase
+        const { error: dbError } = await supabase
+          .from('admission_applications')
+          .update({
+            student_name: editableApp.studentName,
+            parent_name: editableApp.parentName,
+            email: editableApp.email,
+            phone: editableApp.phone,
+            grade: editableApp.grade,
+            city: editableApp.city,
+            previous_school: editableApp.previousSchool,
+            status: editableApp.status,
+            message: editableApp.message
+          })
+          .eq('id', editableApp.id);
+
+        if (dbError) throw dbError;
         
         // Update local state
         setApplications(prev => prev.map(app => app.id === editableApp.id ? editableApp : app));
